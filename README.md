@@ -143,6 +143,9 @@ or:
 POLL_MS = 10
 ```
 
+## Known issues
+- The mouse flickers and creates a ghost replica when hovering over application menus (minimize, maximize, close) in top right corner on Windows 11.
+  
 ## Credits
 
 → by hitem 🖰
