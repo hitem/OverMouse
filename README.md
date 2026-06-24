@@ -5,6 +5,10 @@ OverMouse is a small Python overlay tool that adds a larger, brighter custom cur
 
 The overlay does not replace the game cursor or inject into the game. It draws a transparent, click-through cursor overlay that follows your mouse.
 
+Depending on which mouse cursor is used, you will have overlay aligning like this:\
+<img width="143" height="150" alt="image" src="https://github.com/user-attachments/assets/0f99d2fe-8a64-4077-a5ab-cc05c1a58d7b" /> <img width="148" height="143" alt="image" src="https://github.com/user-attachments/assets/fa8ccaed-5919-4f30-b662-4e02f10a579d" />
+
+
 ## Features
 
 * **Large visible cursor overlay**: Makes the cursor easier to see in dark or busy games.
