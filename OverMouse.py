@@ -169,19 +169,21 @@ def draw_cursor_shape(painter: QPainter, theme: dict, scale: float):
     def p(x: int, y: int) -> QPoint:
         return QPoint(scaled(x, scale), scaled(y, scale))
 
+    # Shape tuned so the real gray/iron game cursor sits inside the front tip.
+    # The front tip is pulled down/right slightly and the rear wing is made a bit flatter.
     outer = QPolygon(
         [
-            p(18, 18),
-            p(145, 82),
-            p(88, 99),
-            p(55, 165),
+            p(21, 21),    # front tip, slightly lower/right than before
+            p(146, 82),   # right wing
+            p(88, 99),    # inner notch
+            p(55, 165),   # back tail
         ]
     )
 
     inner_main = QPolygon(
         [
-            p(28, 31),
-            p(122, 78),
+            p(34, 37),    # fill starts farther inside the iron tip
+            p(121, 78),
             p(78, 92),
             p(58, 139),
         ]
@@ -189,19 +191,19 @@ def draw_cursor_shape(painter: QPainter, theme: dict, scale: float):
 
     highlight = QPolygon(
         [
-            p(29, 32),
-            p(78, 56),
-            p(65, 106),
+            p(35, 38),
+            p(77, 58),
+            p(65, 105),
         ]
     )
 
     shadow = QPolygon(
         [
-            p(78, 56),
-            p(122, 78),
+            p(77, 58),
+            p(121, 78),
             p(78, 92),
             p(58, 139),
-            p(65, 106),
+            p(65, 105),
         ]
     )
 
@@ -228,8 +230,8 @@ def draw_cursor_shape(painter: QPainter, theme: dict, scale: float):
     line_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
 
     painter.setPen(line_pen)
-    painter.drawLine(p(78, 56), p(65, 106))
-    painter.drawLine(p(65, 106), p(58, 139))
+    painter.drawLine(p(77, 58), p(65, 105))
+    painter.drawLine(p(65, 105), p(58, 139))
 
 
 def average_color_from_region(image: QImage, x0: int, y0: int, x1: int, y1: int):
