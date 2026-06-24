@@ -144,7 +144,7 @@ POLL_MS = 25
 ```
 
 ## Known issues
-- The mouse flickers and creates a ghost replica when hovering over application menus (minimize, maximize, close) in top right corner on Windows 11.
+- Please submit a bug if you find one
   
 ## Credits
 
