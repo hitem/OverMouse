@@ -5,8 +5,8 @@ import ctypes
 import re
 import shutil
 from pathlib import Path
-from PyQt6.QtCore import Qt, QTimer, QPoint
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon, QCursor, QImage
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRect
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon, QCursor, QImage, QPixmap
 from PyQt6.QtWidgets import QApplication, QWidget
 
 
@@ -15,7 +15,11 @@ STATE_FILE = Path(__file__).with_name("OverMouse.state.json")
 
 SCALE = 0.5
 TERMINAL_PREVIEW_SCALE = 0.26
-POLL_MS = 5
+POLL_MS = 12
+
+CURSOR_PIXMAP_SOURCE_W = 180
+CURSOR_PIXMAP_SOURCE_H = 190
+CURSOR_DIRTY_PADDING = 8
 
 VK_F6 = 0x75
 VK_F7 = 0x76
@@ -233,6 +237,16 @@ def draw_cursor_shape(painter: QPainter, theme: dict, scale: float):
     painter.drawLine(p(77, 58), p(65, 105))
     painter.drawLine(p(65, 105), p(58, 139))
 
+def render_cursor_pixmap(theme: dict) -> QPixmap:
+    pixmap = QPixmap(s(CURSOR_PIXMAP_SOURCE_W), s(CURSOR_PIXMAP_SOURCE_H))
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    draw_cursor_shape(painter, theme, SCALE)
+    painter.end()
+
+    return pixmap
 
 def average_color_from_region(image: QImage, x0: int, y0: int, x1: int, y1: int):
     r_total = 0
@@ -379,8 +393,6 @@ class ScreenOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
-        # Each overlay only covers one monitor.
-        # This avoids mixed-DPI/mixed-resolution bugs from one huge virtual desktop window.
         self.setGeometry(screen.geometry())
 
         QTimer.singleShot(0, self.make_clickthrough)
@@ -406,34 +418,29 @@ class ScreenOverlay(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
 
-        # Force-clear old frame.
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.fillRect(event.rect(), Qt.GlobalColor.transparent)
 
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if not self.controller.overlay_enabled:
             return
 
-        global_pos = QCursor.pos()
-        current_screen = QApplication.screenAt(global_pos)
-
-        if current_screen is None:
-            current_screen = QApplication.primaryScreen()
-
-        if current_screen is None:
+        global_pos = self.controller.last_pos
+        if global_pos is None:
             return
 
-        # Only the overlay for the active monitor draws the cursor.
-        if current_screen.name() != self.screen.name():
+        active_screen = self.controller.active_screen
+        if active_screen is None:
+            return
+
+        if active_screen.name() != self.screen.name():
             return
 
         local_pos = self.mapFromGlobal(global_pos)
         draw_pos = local_pos - self.controller.hotspot + self.controller.draw_offset
 
-        painter.translate(draw_pos)
-        draw_cursor_shape(painter, self.controller.current_theme(), SCALE)
+        painter.drawPixmap(draw_pos, self.controller.cursor_pixmaps[self.controller.theme_index])
 
 
 class CursorOverlay:
@@ -444,17 +451,28 @@ class CursorOverlay:
         self.theme_index = state["theme_index"]
 
         self.overlay_enabled = True
+        self.temporarily_hidden = False
+
         self.last_f6_down = False
         self.last_f7_down = False
 
-        # Real pointer anchor. Keep this aligned to the gray in-game cursor tip.
-        self.hotspot = QPoint(s(24), s(24))
+        self.last_pos = None
+        self.active_screen = None
+        self.last_screen_name = None
+        self.last_draw_rect_by_screen = {}
 
-        # Moves the drawn cursor art relative to the pointer.
+        self.hotspot = QPoint(s(24), s(24))
         self.draw_offset = QPoint(s(5), s(5))
 
+        self.cursor_pixmaps = [
+            render_cursor_pixmap(theme)
+            for theme in THEMES
+        ]
+
+        self.cursor_pixmap_size = self.cursor_pixmaps[0].size()
+
         self.overlays = []
-        self.screen_names = []
+        self.screen_signature = None
 
         self.rebuild_overlays()
 
@@ -462,48 +480,92 @@ class CursorOverlay:
         self.timer.timeout.connect(self.update_overlay)
         self.timer.start(POLL_MS)
 
+    def screen_signature_now(self):
+        return [
+            (
+                screen.name(),
+                screen.geometry().x(),
+                screen.geometry().y(),
+                screen.geometry().width(),
+                screen.geometry().height(),
+            )
+            for screen in QApplication.screens()
+        ]
+
     def rebuild_overlays(self):
         for overlay in self.overlays:
             overlay.hide()
             overlay.deleteLater()
 
         self.overlays = []
-        self.screen_names = []
 
         for screen in QApplication.screens():
             overlay = ScreenOverlay(self, screen)
             overlay.show()
             self.overlays.append(overlay)
-            self.screen_names.append(screen.name())
+
+        self.screen_signature = self.screen_signature_now()
 
     def screens_changed(self) -> bool:
-        current_names = [screen.name() for screen in QApplication.screens()]
-        return current_names != self.screen_names
+        return self.screen_signature_now() != self.screen_signature
 
     def current_theme(self) -> dict:
         return THEMES[self.theme_index]
 
     def show(self):
         for overlay in self.overlays:
-            overlay.show()
+            if not overlay.isVisible():
+                overlay.show()
 
     def hide(self):
         for overlay in self.overlays:
-            overlay.hide()
+            if overlay.isVisible():
+                overlay.hide()
 
-    def update(self):
+    def update_active_overlay_only(self):
+        if self.active_screen is None or self.last_pos is None:
+            return
+
+        active_name = self.active_screen.name()
+
         for overlay in self.overlays:
-            overlay.update()
+            screen_name = overlay.screen.name()
+
+            old_rect = self.last_draw_rect_by_screen.get(screen_name)
+
+            if screen_name == active_name:
+                local_pos = overlay.mapFromGlobal(self.last_pos)
+                draw_pos = local_pos - self.hotspot + self.draw_offset
+
+                new_rect = QRect(draw_pos, self.cursor_pixmap_size).adjusted(
+                    -CURSOR_DIRTY_PADDING,
+                    -CURSOR_DIRTY_PADDING,
+                    CURSOR_DIRTY_PADDING,
+                    CURSOR_DIRTY_PADDING,
+                )
+
+                if old_rect is not None:
+                    overlay.update(old_rect)
+
+                overlay.update(new_rect)
+                self.last_draw_rect_by_screen[screen_name] = new_rect
+            else:
+                if old_rect is not None:
+                    overlay.update(old_rect)
+                    self.last_draw_rect_by_screen.pop(screen_name, None)
 
     def key_down(self, vk_code: int) -> bool:
         return bool(self.user32.GetAsyncKeyState(vk_code) & 0x8000)
 
-    def handle_hotkeys(self):
+    def handle_hotkeys(self) -> bool:
+        changed = False
+
         f6_down = self.key_down(VK_F6)
         f7_down = self.key_down(VK_F7)
 
         if f6_down and not self.last_f6_down:
             self.overlay_enabled = not self.overlay_enabled
+            changed = True
 
             if self.overlay_enabled:
                 self.show()
@@ -515,30 +577,54 @@ class CursorOverlay:
         if f7_down and not self.last_f7_down:
             self.theme_index = (self.theme_index + 1) % len(THEMES)
             save_state(self.theme_index)
+            changed = True
 
             theme = self.current_theme()
             print(f"Theme changed to: {theme['name']}", flush=True)
 
-            self.update()
-
         self.last_f6_down = f6_down
         self.last_f7_down = f7_down
 
-    def update_overlay(self):
-        self.handle_hotkeys()
+        return changed
 
-        if self.screens_changed():
-            self.rebuild_overlays()
+    def update_overlay(self):
+        changed = self.handle_hotkeys()
 
         if not self.overlay_enabled:
             return
 
-        if self.key_down(VK_RBUTTON):
-            self.hide()
+        right_down = self.key_down(VK_RBUTTON)
+
+        if right_down:
+            if not self.temporarily_hidden:
+                self.temporarily_hidden = True
+                self.hide()
             return
 
-        self.show()
-        self.update()
+        if self.temporarily_hidden:
+            self.temporarily_hidden = False
+            self.show()
+            changed = True
+
+        current_pos = QCursor.pos()
+        current_screen = QApplication.screenAt(current_pos)
+
+        if current_screen is None:
+            current_screen = QApplication.primaryScreen()
+
+        current_screen_name = current_screen.name() if current_screen else None
+
+        pos_changed = self.last_pos != current_pos
+        screen_changed = self.last_screen_name != current_screen_name
+
+        if not changed and not pos_changed and not screen_changed:
+            return
+
+        self.last_pos = current_pos
+        self.active_screen = current_screen
+        self.last_screen_name = current_screen_name
+
+        self.update_active_overlay_only()
 
 
 def main():

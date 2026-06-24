@@ -128,19 +128,19 @@ OverMouse works best in borderless/windowed games. Some fullscreen games or anti
 If the cursor flickers, try increasing:
 
 ```python
-POLL_MS = 5
+POLL_MS = 12
 ```
 
 to:
 
 ```python
-POLL_MS = 8
+POLL_MS = 20
 ```
 
 or:
 
 ```python
-POLL_MS = 10
+POLL_MS = 25
 ```
 
 ## Known issues
